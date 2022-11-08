@@ -79,7 +79,13 @@ func (vs *VolumeSnapshotter) UpdateSnapshotProgress(diskInfo *compute.Disk, tags
 	currentTimeString := time.Now().UTC().Format(TimeFormat)
 	progress.State = snapshot.Status
 	progress.Message = currentTimeString + " " + snapshotStateMessage
-	progress.SnapshotProgress = int32(snapshot.StorageBytes)
+	if snapshot.DiskSizeGb > 0 {
+		storageBytesInGb := int64(float64(snapshot.StorageBytes) / (1 << 30))
+		progress.SnapshotProgress = int32(storageBytesInGb / snapshot.DiskSizeGb)
+	}
+	if snapshot.Status == "READY" {
+		progress.SnapshotProgress = 100
+	}
 	progress.Pvc = &pvc
 	vs.log.Infof("Update Snapshot Progress - Progress Payload: %s", progress)
 
