@@ -24,10 +24,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	uuid "github.com/gofrs/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/googleapi"
@@ -89,18 +91,21 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 
 	// If credential is provided for the VSL, use it instead of default credential.
 	if credentialsFile, ok := config[credentialsFileConfigKey]; ok {
-		b, err := os.ReadFile(credentialsFile)
+		fileContent, err := os.ReadFile(credentialsFile)
 		if err != nil {
 			return errors.Wrapf(err, "error reading provided credentials file %v", credentialsFile)
 		}
 
-		creds, err = google.CredentialsFromJSON(context.TODO(), b)
-		if err != nil {
+		var encodedToken oauth2.Token
+		if err := json.Unmarshal(fileContent, &encodedToken); err != nil {
 			return errors.WithStack(err)
 		}
 
+		cfg := &oauth2.Config{}
+		httpClient := cfg.Client(context.TODO(), &encodedToken)
+
 		// If using a credentials file, we also need to pass it when creating the client.
-		clientOptions = append(clientOptions, option.WithCredentialsFile(credentialsFile))
+		clientOptions = append(clientOptions, option.WithHTTPClient(httpClient))
 	} else {
 		/* Use default credential, when no credential is provisioned in VSL. */
 		creds, err = google.FindDefaultCredentials(context.TODO(), compute.ComputeScope)
@@ -112,7 +117,7 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 
 	b.snapshotLocation = config[snapshotLocationKey]
 
-	b.volumeProject = config[volumeProjectKey]
+	b.volumeProject = config[projectKey]
 	if b.volumeProject == "" {
 		b.volumeProject = creds.ProjectID
 	}
@@ -335,6 +340,13 @@ func (b *VolumeSnapshotter) createSnapshot(snapshotName, volumeID, volumeAZ stri
 		return "", errors.WithStack(err)
 	}
 
+	// Wait for snapshot to complete, and update the configmap in order to
+	// relay the snapshot progress to the agent.
+	if err := b.reportSnapshotProgress(disk, gceSnap, snapshotName, tags); err != nil {
+		b.log.Errorf("Failed to report Google Persistent Disk Volume snapshot progress: %s", err.Error())
+		return "", errors.WithStack(err)
+	}
+
 	return gceSnap.Name, nil
 }
 
@@ -357,6 +369,13 @@ func (b *VolumeSnapshotter) createRegionSnapshot(snapshotName, volumeID, volumeR
 
 	_, err = b.gce.Snapshots.Insert(b.snapshotProject, &gceSnap).Do()
 	if err != nil {
+		return "", errors.WithStack(err)
+	}
+
+	// Wait for snapshot to complete, and update the configmap in order to
+	// relay the snapshot progress to the agent.
+	if err := b.reportSnapshotProgress(disk, gceSnap, snapshotName, tags); err != nil {
+		b.log.Errorf("Failed to report Google Persistent Disk Volume snapshot progress: %s", err.Error())
 		return "", errors.WithStack(err)
 	}
 
@@ -497,4 +516,80 @@ func (b *VolumeSnapshotter) IsVolumeCreatedCrossProjects(volumeHandle string) bo
 	}
 
 	return false
+}
+
+func (b *VolumeSnapshotter) reportSnapshotProgress(disk *compute.Disk, gceSnap compute.Snapshot, snapshotName string, tags map[string]string) error {
+	// Wait for snapshot to complete, and update the configmap in order to
+	// relay the snapshot progress to the agent.
+	elapsedTimeSeconds := 0
+	var deleteSnapshotProgressConfigMap bool
+	var previousProgress int64
+	for {
+		snapshot, err := b.gce.Snapshots.Get(b.snapshotProject, snapshotName).Do()
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				b.log.Infof("Snapshot not found: %s. Will check in 5 seconds...", err.Error())
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			b.log.Errorf("Failed to get the Google Persistent Disk Volume snapshot. Name: %s, err: %s", snapshotName, err.Error())
+			return errors.WithStack(err)
+		}
+
+		if !deleteSnapshotProgressConfigMap {
+			defer b.DeleteSnapshotProgressConfigMap()
+			deleteSnapshotProgressConfigMap = true
+		}
+
+		if snapshot != nil {
+			switch snapshot.Status {
+			case "FAILED":
+				err = fmt.Errorf("Google Persistent Disk volume snapshot failed")
+				b.log.Error(err)
+				return errors.WithStack(err)
+			case "DELETING":
+				err = fmt.Errorf("Google Persistent Disk volume snapshot is being deleted")
+				b.log.Error(err)
+				return errors.WithStack(err)
+			case "READY":
+				b.log.Infof("Google Persistent Disk volume snapshot completed. Snap name: %s", gceSnap.Name)
+				err = b.UpdateSnapshotProgress(disk, tags, snapshot, "GCE Persistent Disk Volume snapshot completed")
+				if err != nil {
+					b.log.Errorf("Failed to report Google Persistent Disk volume snapshot progress: %s", err.Error())
+				}
+				return nil
+			case "UPLOADING", "CREATING":
+				if elapsedTimeSeconds == 3600 {
+					previousProgress = snapshot.StorageBytes
+				} else if elapsedTimeSeconds > 3600 && elapsedTimeSeconds%3600 == 0 {
+					if previousProgress == snapshot.StorageBytes {
+						err := fmt.Errorf("Google Persistent Disk Volume snapshot has been stuck for %d seconds", elapsedTimeSeconds)
+						b.log.Error(err)
+
+						snapshot.Status = "FAILED"
+						if updateErr := b.UpdateSnapshotProgress(disk, tags, snapshot, err.Error()); updateErr != nil {
+							b.log.Errorf("Failed to update Google Persistent Disk snapshot progress: %s", err.Error())
+						}
+						return err
+					}
+					previousProgress = snapshot.StorageBytes
+				}
+				b.log.Infof("Google Persistent Disk volume snapshot status: %s. Snap name: %s", snapshot.Status, gceSnap.Name)
+				err = b.UpdateSnapshotProgress(disk, tags, snapshot, "GCE Persistent Disk Volume snapshot in progress")
+				if err != nil {
+					b.log.Errorf("Failed to report Google Persistent Disk volume snapshot progress: %s", err.Error())
+				}
+			default:
+				err = fmt.Errorf("Unsupport snapshot status: %s for snapshot %s", snapshot.Status, gceSnap.Name)
+				b.log.Error(err)
+				return errors.WithStack(err)
+			}
+
+			elapsedTimeSeconds += 15
+			time.Sleep(15 * time.Second)
+			continue
+		}
+		break
+	}
+	return nil
 }

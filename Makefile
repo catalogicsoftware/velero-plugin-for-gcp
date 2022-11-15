@@ -19,8 +19,8 @@ BIN ?= velero-plugin-for-gcp
 PKG := github.com/vmware-tanzu/velero-plugin-for-gcp
 
 # Where to push the docker image.
-REGISTRY ?= velero
 GCR_REGISTRY ?= gcr.io/velero-gcp
+REGISTRY ?= catalogicsoftware
 
 # Image name
 IMAGE ?= $(REGISTRY)/$(BIN)
