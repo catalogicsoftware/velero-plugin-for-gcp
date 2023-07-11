@@ -37,6 +37,7 @@ local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
 
 VERSION ?= main
+IMAGEVERSION = v1.5.1.2
 
 TAG_LATEST ?= false
 
@@ -98,6 +99,11 @@ test:
 
 # ci is a convenience target for CI builds.
 ci: verify-modules test
+
+docker-build:
+	docker buildx create --name multiarch
+	docker buildx use multiarch
+	docker buildx build -t $(IMAGE):$(IMAGEVERSION) --platform=linux/arm64,linux/amd64 -f Dockerfile-common . --push
 
 container:
 ifneq ($(BUILDX_ENABLED), true)
