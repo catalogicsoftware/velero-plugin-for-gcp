@@ -537,7 +537,7 @@ func (b *VolumeSnapshotter) reportSnapshotProgress(disk *compute.Disk, gceSnap c
 		}
 
 		if !deleteSnapshotProgressConfigMap {
-			defer b.DeleteSnapshotProgressConfigMap()
+			defer b.DeleteSnapshotProgressConfigMap(tags)
 			deleteSnapshotProgressConfigMap = true
 		}
 
