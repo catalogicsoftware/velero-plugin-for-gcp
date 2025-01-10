@@ -47,7 +47,7 @@ const (
 	TimeFormat         = "2006-01-06 15:04:05 UTC: "
 	CloudCasaNamespace = "cloudcasa-io"
 	// Name of ConfigMap used to to report progress of snapshot
-	SnapshotProgressUpdateConfigMapName = "cloudcasa-io-snapshot-updater"
+	snapshotProgressUpdateConfigMapNamePrefix = "cloudcasa-io-snapshot-updater-gcp-"
 )
 
 // UpdateSnapshotProgress updates the ConfigMap in order to relay the snapshot
@@ -99,13 +99,14 @@ func (vs *VolumeSnapshotter) UpdateSnapshotProgress(diskInfo *compute.Disk, tags
 	requestData["snapshot_progress_payload"] = marshalledProgressData
 	vs.log.Info("Update Snapshot Progress - Marsahlled the JSON payload")
 
+	progressConfigMapName := snapshotProgressUpdateConfigMapNamePrefix + progress.JobId
 	progressConfigMap := corev1api.ConfigMap{
 		TypeMeta: v1.TypeMeta{
 			Kind:       "ConfigMap",
 			APIVersion: "v1",
 		},
 		ObjectMeta: v1.ObjectMeta{
-			Name:      SnapshotProgressUpdateConfigMapName,
+			Name:      progressConfigMapName,
 			Namespace: CloudCasaNamespace,
 		},
 		BinaryData: requestData,
@@ -130,7 +131,7 @@ func (vs *VolumeSnapshotter) UpdateSnapshotProgress(diskInfo *compute.Disk, tags
 
 	// Create or update the snapshot progress ConfigMap
 	var mcm *corev1api.ConfigMap
-	_, err = clientset.CoreV1().ConfigMaps(CloudCasaNamespace).Get(context.TODO(), SnapshotProgressUpdateConfigMapName, v1.GetOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(CloudCasaNamespace).Get(context.TODO(), progressConfigMapName, v1.GetOptions{})
 	if kerror.IsNotFound(err) {
 		mcm, err = clientset.CoreV1().ConfigMaps(CloudCasaNamespace).Create(context.TODO(), &progressConfigMap, v1.CreateOptions{})
 		if err != nil {
@@ -152,7 +153,9 @@ func (vs *VolumeSnapshotter) UpdateSnapshotProgress(diskInfo *compute.Disk, tags
 }
 
 // DeleteSnapshotProgressConfigMap deletes the ConfigMap used to report snapshot progress
-func (vs *VolumeSnapshotter) DeleteSnapshotProgressConfigMap() {
+func (vs *VolumeSnapshotter) DeleteSnapshotProgressConfigMap(tags map[string]string) {
+	jobId := tags["velero.io/backup"]
+	progressConfigMapName := snapshotProgressUpdateConfigMapNamePrefix + jobId
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -163,10 +166,10 @@ func (vs *VolumeSnapshotter) DeleteSnapshotProgressConfigMap() {
 	if err != nil {
 		vs.log.Error(errors.Wrap(err, "Failed to create in-cluster clientset"))
 	}
-	err = clientset.CoreV1().ConfigMaps(CloudCasaNamespace).Delete(context.TODO(), SnapshotProgressUpdateConfigMapName, v1.DeleteOptions{})
+	err = clientset.CoreV1().ConfigMaps(CloudCasaNamespace).Delete(context.TODO(), progressConfigMapName, v1.DeleteOptions{})
 	if err != nil {
 		vs.log.Error(errors.Wrap(err, "Failed to delete ConfigMap used to report snapshot progress"))
 	} else {
-		vs.log.Infof("Deleted ConfigMap used to report snapshot progress - ConfigMap Name: %s", SnapshotProgressUpdateConfigMapName)
+		vs.log.Infof("Deleted ConfigMap used to report snapshot progress - ConfigMap Name: %s", progressConfigMapName)
 	}
 }
