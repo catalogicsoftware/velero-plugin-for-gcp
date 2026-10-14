@@ -449,9 +449,10 @@ func TestInit(t *testing.T) {
 			},
 			expectedVolumeSnapshotter: VolumeSnapshotter{
 				snapshotLocation: "default",
-				volumeProject:    "project-b",
-				snapshotProject:  "project-a",
-				snapshotType:     "STANDARD",
+				// CloudCasa: the volumes are always in the "project" project.
+				volumeProject:   "project-a",
+				snapshotProject: "project-a",
+				snapshotType:    "STANDARD",
 			},
 		},
 		{
@@ -464,9 +465,10 @@ func TestInit(t *testing.T) {
 			},
 			expectedVolumeSnapshotter: VolumeSnapshotter{
 				snapshotLocation: "default",
-				volumeProject:    "project-b",
-				snapshotProject:  "project-a",
-				snapshotType:     "STANDARD",
+				// CloudCasa: the volumes are always in the "project" project.
+				volumeProject:   "project-a",
+				snapshotProject: "project-a",
+				snapshotType:    "STANDARD",
 			},
 		},
 		{
@@ -479,9 +481,10 @@ func TestInit(t *testing.T) {
 			},
 			expectedVolumeSnapshotter: VolumeSnapshotter{
 				snapshotLocation: "default",
-				volumeProject:    "project-b",
-				snapshotProject:  "project-a",
-				snapshotType:     "ARCHIVE",
+				// CloudCasa: the volumes are always in the "project" project.
+				volumeProject:   "project-a",
+				snapshotProject: "project-a",
+				snapshotType:    "ARCHIVE",
 			},
 		},
 	}
