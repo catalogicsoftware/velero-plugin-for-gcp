@@ -17,7 +17,7 @@ properties([
         ),
         string(
             name: "VELERO_TARGET_BRANCH",
-            defaultValue: "",
+            defaultValue: "ks-v1.18.4.x",
             description: "Velero repo branch to update (defaults to the current branch name)"
         ),
         string(
