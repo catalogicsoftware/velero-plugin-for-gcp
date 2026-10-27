@@ -38,7 +38,7 @@ node("cloudcasa-build") {
     def sanitizedBranch = sourceBranch.replaceAll('[^0-9A-Za-z-]', '-')
 
     // Follow amds-veleroplugin style: <baseVersion>-<branch>.<buildNumber>
-    def baseVersion = "1.14.0"
+    def baseVersion = "1.14.4"
     if (sourceBranch ==~ /^v\d+\.\d+\.\d+\.x$/) {
         baseVersion = sourceBranch.substring(1, sourceBranch.length() - 2)
     }
